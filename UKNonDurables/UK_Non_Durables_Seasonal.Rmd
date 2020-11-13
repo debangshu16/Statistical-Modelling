@@ -1,0 +1,306 @@
+---
+title: "UK Non Durables Seasonal"
+output:
+  html_document:
+    df_print: paged
+---
+
+From the basic ARIMA forecasting of the consumpion of non durables in UK, we saw that there were various problems with the best model chosen. This was particularly due to the assumption that there is no seasonality in the data. So we are going to address that here. As usual due to the wide variance of values in the data we are going to work on the log transformed data.
+
+```{r, message=FALSE, warning=FALSE}
+library(tseries)
+library(forecast)
+library(dplyr)
+library(moments)
+data = read.table('UKNonDurables.csv',sep=',',header=T,stringsAsFactors = F)
+data = data[, c('time','value')]
+
+#Ordering data based on time
+data = data[order(data$time),]
+
+#Check for missing data 
+sum(is.na(data))
+#So there are no missing values in the dataset
+
+#Cleaning data
+start_date = data$time[1]
+value = ts(data$value, start = start_date,freq =4)
+value = tsclean(value)
+data$value = value
+
+
+#Time series plot of the whole data
+ts.plot(value,main = "Consumption of Non Durables in UK")
+```
+
+Working with the log values instead:
+
+```{r}
+data['log_value'] = log(data$value)
+ts.plot(data$log_value,main = "log of Consumption of Non Durables in UK",
+        ylab = 'Log consumption')
+```
+
+
+Setting apart a test set of last 6 quarters.
+
+```{r}
+
+tm = data$time
+
+period<- 6
+n = dim(data)[1]
+train_lim = n - period
+
+
+#Split data into train data and test data with train data = 95% of the data
+train_data = data[1:train_lim,]
+test_data = data[(train_lim+1):n,]
+
+```
+
+*** Part 1: Decomposing data into seasonality and trend ***
+
+From the time series plot, there seems to be an additive seasonality. So, we decompose the original data into trend, seasonality and the random components. We subtract the seasonality from the data to get a transformed time series $Y^{'}$. We build our ARIMA model on $Y^{'}$ and after we forecast the values we add back the seasonality components for each quarter.
+
+```{r}
+value<- ts(train_data$log_value, start = start_date, frequency = 4)
+decomposed<- decompose(value, type = 'additive')
+plot(decomposed)
+
+seasonal<- decomposed$seasonal
+trend<- decomposed$trend
+rdm<- decomposed$random
+
+
+```
+
+```{r}
+yt<- value - seasonal
+
+ts.plot(yt, main ='Plot of Observed - Seasonal')
+
+```
+
+Checking Stationarity of $Y^{'}$
+
+```{r}
+adf.test(yt)
+kpss.test(yt)
+pp.test(yt)
+```
+
+So, the series is non stationary. We are going to try to check the stationarity after differencing.
+
+```{r}
+ts.plot(diff(yt))
+```
+
+The first order differenced data looks stationary. We are going to test for the same.
+
+```{r}
+adf.test(diff(yt))
+kpss.test(diff(yt))
+pp.test(diff(yt))
+```
+
+So, the first ordered differenced data is stationary. We are going to work with a differencing order of 1. Now we find the appropriate ARIMA model with lowest AICc value.
+
+```{r}
+d<- ndiffs(yt)
+
+model = auto.arima(yt,seasonal = F,d=d,max.p = 5, max.q = 5, ic = "aicc")
+summary(model)
+
+```
+
+So, ARIMA (3,1,3) with drift is chosen as the best model of $Y^{'}$.
+
+We see the forecast of $Y^{'}$ for last 6 quarters as follows:
+
+```{r}
+plot(forecast(model,h=period),type='l')
+
+```
+
+Now, we add the seasonal components to the trend forecast to get our actual forecast.
+
+```{r}
+get_quarter<- function(date)
+{
+  return (((date - floor(date))*4)+1)
+}
+
+arima_forecast<- forecast(model, h = period)
+trend_pred<- arima_forecast$mean
+
+pred <- trend_pred
+for (i in 1:period)
+{
+  date = test_data$time[i]
+  qtr = get_quarter(date)
+  
+  seasonal_comp <- seasonal[qtr]
+  pred<- pred + seasonal_comp
+}
+
+```
+
+```{r}
+plot(NULL,xlim = c(tm[1],tm[n]),ylim = c(10,11.5),ylab = 'Log Non Durables consumption',xlab='Time')
+points(data$time, data$log_value,type='l',lwd=2,col='blue')
+points(test_data$time, test_data$log_value,type='l',lwd=2,col='black')
+points(test_data$time, pred,type='l',lwd=2,col='green')
+abline(v= test_data$time[1], col = 'black')
+legend("bottomright",
+       legend =  c("train_values","test_values","forecasted_values"),
+       col = c("blue","black","green"),lty = 1,
+       cex = 0.8)
+
+```
+
+We also check the mean squared log error.
+```{r}
+log_mse<- sum((test_data$log_value - pred)^2)
+log_mse
+```
+
+```{r}
+pred_exp<- exp(pred)
+plot(NULL,xlim = c(tm[1],tm[n]),ylim = c(20000,70000),ylab = 'Non Durables consumption',xlab='Time')
+points(data$time, data$value,type='l',lwd=2,col='blue')
+points(test_data$time, test_data$value,type='l',lwd=2,col='black')
+points(test_data$time, pred_exp,type='l',lwd=2,col='green')
+legend("bottomright",
+       legend =  c("train_values","test_values","forecasted_values"),
+       col = c("blue","black","green"),lty = 1,
+              cex = 0.8)
+
+abline(v=tm[(train_lim+1)],col='grey')
+
+```
+
+```{r}
+rmse<- sqrt(sum((test_data$value - pred_exp)^2))
+rmse
+
+cbind(test_data$value, pred_exp)
+```
+
+We see that the model was close with respect to the first two quarters forecast but then it fell off.
+
+However, let's check if the model satisfies the assumptions of ARIMA modelling which failed when we did not consider seasonality.
+
+```{r}
+#Assumptions
+errors<- model$residuals
+
+acf(errors)
+
+Box.test(errors, lag = log(train_lim), type = "Ljung-Box")
+#Asumption of independece valid
+
+qqnorm(errors)
+qqline(errors)
+
+shapiro.test(errors)
+ks.test(errors, 'pnorm', 0, sqrt(model$sigma2))
+```
+
+From the ACF plot and Box-Ljung Test, assumption of no autocorrelation of residuals is satisfied. From the QQPlot and Shapiro Wilk and Kolmogorov-Smirnov test, assumption of normality of residuals is valid.
+
+```{r}
+plot(yt, errors, main = 'Fitted vs Residuals')
+abline(h=0)
+```
+
+
+*** Building Seasonal ARIMA model ***
+
+```{r}
+yt<- train_data$log_value
+acf(yt)
+pacf(yt)
+
+```
+
+ 
+From the acf and pacf plots of the data, it looks like seasonal lag of 1 is necessary for AR part.
+
+```{r}
+sarima_model<- arima(yt, order = c(3,1,3), seasonal = list(order = c(1,1,0), period = 4))
+sarima_model
+
+```
+
+```{r}
+sarima_forecast<- forecast(sarima_model, h= period)
+sarima_pred<- sarima_forecast$mean
+
+sarima_pred
+log_mse_sarima<- sum((sarima_pred - test_data$log_value)^2)
+
+```
+
+```{r}
+
+sarima_pred_exp<- exp(sarima_pred)
+
+plot(NULL,xlim = c(tm[1],tm[n]),ylim = c(20000,70000),ylab = 'Non Durables consumption',xlab='Time')
+points(data$time, data$value,type='l',lwd=2,col='blue')
+points(test_data$time, test_data$value,type='l',lwd=2,col='black')
+points(test_data$time, sarima_pred_exp,type='l',lwd=2,col='green')
+legend("bottomright",
+       legend =  c("train_values","test_values","forecasted_values"),
+       col = c("blue","black","green"),lty = 1,
+       cex = 0.8)
+
+abline(v=tm[train_lim+1],col='grey')
+
+```
+
+```{r}
+rmse<- sqrt(sum((test_data$value - sarima_pred_exp)^2))
+rmse
+
+cbind(test_data$value, pred_exp)
+```
+
+
+We see that the SARIMA model is performing way better the models before. We perform the test for the assumptions of the model to see if it violates assumptions.
+
+```{r}
+#Assumptions
+errors<- sarima_model$residuals
+
+acf(errors)
+
+Box.test(errors, lag = log(train_lim), type = "Ljung-Box")
+#Asumption of independece valid
+
+qqnorm(errors)
+qqline(errors)
+
+shapiro.test(errors)
+ks.test(errors, 'pnorm', 0, sqrt(sarima_model$sigma2))
+
+```
+
+We see that for Shapiro Wilk, the assumption of normality fails whereas for Kolmogorv Smirnov test, the assumption of normality cannot be rejected.
+
+```{r}
+plot(yt, errors, main = 'Fitted vs Residuals')
+abline(h=0)
+```
+
+Other than the debatable normality of errors assumption this model is outperforming every other model so far.
+
+Let's look at the acf of squared residuals to check if it is fine or ARCH/GARCH model is needed.
+
+```{r}
+errors2<- errors^2
+acf(errors2)
+Box.test(errors2, lag =log(train_lim), type = "Ljung-Box")
+```
+
+We see that the model is fine and has produced best results seen so far.
