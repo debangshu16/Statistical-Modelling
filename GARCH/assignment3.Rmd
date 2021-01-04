@@ -1,0 +1,196 @@
+---
+title: "IR Assignment3"
+output: html_notebook
+---
+
+Importing Libraries
+```{r}
+library(tseries)
+library(forecast)
+library(rugarch)
+
+```
+
+1) Reading data, making it stationary and splitting into train and test set:
+
+Reading Google stock price data from 1st January 2020 to 31st October 2020.
+```{r}
+start_date <- as.Date("2020-01-01")
+end_date <- as.Date("2020-10-31")
+google_stock<-get.hist.quote(instrument = "GOOGL"
+                                      ,start=start_date,end=end_date
+                                      ,quote="Close",provider = "yahoo") 
+
+plot(google_stock, xlab = "Time", ylab ="Close", main = "Google Stock Close vs Time 2020
+     ")
+data = ts(google_stock)
+```
+
+Stationarity Test of the stock price series :
+
+```{r}
+adf.test(data)
+kpss.test(data)
+pp.test(data)
+```
+
+We can see that for ADF and PP test we cannot reject the null hypothesis of non-stationarity while for KPSS test the null hypothesis of stationarity is rejected. Thus, clearly the stock price series is not stationary. So, now we will check for the stationarity of the log return series.
+
+```{r}
+lrt = diff(log(data))
+plot(lrt, xlab = "Time", ylab = "Log Return",
+     main = "Google stock Log return Time Series")
+```
+
+```{r}
+adf.test(lrt)
+kpss.test(lrt)
+pp.test(lrt)
+```
+
+From the stationarity tests, we can see that the log return series is stationary. So, we are going to build our model on the log return series instead of the original closing stock price series.
+
+Splitting data into train and test set where test set is the last 6 observations:
+```{r}
+period = 6
+n<- length(lrt)
+train_lim = n - period
+train_data = lrt[c(1:train_lim)]
+test_data = lrt[c((train_lim+1):n)]
+
+length(train_data)
+length(test_data)
+
+d<-ndiffs(train_data)
+
+```
+We can see that there are 204 observations in the train set for model building and 6 observations in the test set.
+
+2) Fitting Appropriate ARIMA model
+
+AIC model
+```{r}
+aic_model = auto.arima(train_data,max.p = 5, max.q = 5,d = d, ic = "aic")
+aic_model
+
+```
+
+BIC model
+```{r}
+bic_model = auto.arima(train_data,max.p = 5, max.q = 5,d =d, ic = "bic")
+bic_model
+```
+
+We can see that for AIC and BIC selection criteria an ARMA(1,0) model is selected as the best model.
+
+```{r}
+pred_arima<- forecast(aic_model, h = period)
+arima_forecast<- pred_arima$mean
+
+plot(forecast(aic_model,h=period),type='l')
+lines(c((train_lim+1):n),test_data, col = 'black')
+
+```
+
+Getting the residuals of ARMA(1,0) model.
+
+```{r}
+residuals = aic_model$residuals
+residuals2 = residuals ^ 2
+
+```
+
+Mean squared error for ARIMA forecast:
+
+```{r}
+mse_arima = sum((test_data - arima_forecast)^2)
+mse_arima
+```
+
+3) Performing Ljung-Box test on residuals and residuals squared:
+
+```{r}
+Box.test(residuals, lag = log(length(train_data)), type = c("Ljung-Box"))
+Box.test(residuals2,lag = log(length(train_data)), type = c("Ljung-Box"))
+```
+
+The number of lags considered for Ljung-Box test is log of the length of train data as that is considered empirically to be a good enough value. From the Ljung Box test on the residuals we seet that the null hypothesis of no auto-correlation cannot be rejected whereas for the Ljung-Box test on the squared residuals we see that the null hypothesis of no auto-correlation is rejected.
+
+Thus, we look to fit an appropriate GARCH model:
+
+```{r}
+pacf(residuals2)
+acf(residuals2)
+```
+
+From the ACF and PACF plots of the squared residuals, GARCH(2,2) seems to be an appropriate model. However, empirically GARCH(1,1) is a decent model for financial data. So, we compare the AIC and BIC values of these two models and make our model selection.
+
+```{r}
+spec = ugarchspec(variance.model = list(model = "sGARCH", 
+                                        garchOrder = c(1,1)),
+                  mean.model     = list(armaOrder = c(1, 0))) 
+                                        
+garch_lrt <- ugarchfit(spec = spec, data = train_data)
+infocriteria(garch_lrt)
+```
+
+```{r}
+spec = ugarchspec(variance.model = list(model = "sGARCH", 
+                                        garchOrder = c(2,2)),
+                  mean.model     = list(armaOrder = c(1, 0))) 
+                                        
+garch_lrt <- ugarchfit(spec = spec, data = train_data)
+infocriteria(garch_lrt)
+```
+
+The AIC value of GARCH(2,2) is lower than that of GARCH(1,1) but the BIC value of GARCH(1,1) is lower than that of GARCH(2,2). We use the GARCH(1,1) model only for our model building.
+
+```{r}
+spec = ugarchspec(variance.model = list(model = "sGARCH", 
+                                        garchOrder = c(1,1)),
+                  mean.model     = list(armaOrder = c(1, 0))) 
+                                        
+garch_lrt <- ugarchfit(spec = spec, data = train_data)
+
+pred_garch = ugarchforecast(garch_lrt, data = train_data, n.ahead = period)
+
+forecast_garch<- pred_garch@forecast$seriesFor
+
+sigma_forecast<- pred_garch@forecast$sigmaFor
+
+```
+
+Computing the mean squared error for our GARCH model forecast on the test set.
+
+```{r}
+mse_garch = sum((test_data - forecast_garch)^2)
+mse_garch
+```
+
+4) Putting it all together:
+
+Forecast Plot:
+
+```{r}
+plot(NULL,xlim = c(1,n),ylim = c(-0.2,0.2),ylab = 'Market Log Return',xlab='Time',
+     main = 'Actual and Forecasted values of market log return')
+points(c(1:train_lim), train_data,type='l',lwd=2,col='grey')
+points(c(1:n), lrt, type = 'l', col = 'grey')
+points(c((train_lim+1):n), test_data,type='l',lwd=2,col='blue')
+points(c((train_lim+1):n), arima_forecast, type='l', lwd = 2, col = 'red')
+points(c((train_lim+1):n), forecast_garch,type='l',lwd=2,col='black')
+abline(v = (train_lim+1), col = 'grey', lwd = 2)
+legend("bottomright",
+       legend =  c("train_values","test_values","GARCH Forecast", "ARIMA Forecast"),
+       col = c("grey","blue","black", "red"),lty = 1,
+       cex = 0.8)
+
+```
+
+Comparison of MSE for ARIMA and GARCH:
+
+```{r}
+list("ARIMA MSE" = mse_arima, "GARCH MSE" = mse_garch)
+```
+
+Thus, we can see that GARCH model has a lower MSE on the forecast values than ARIMA for GOOGLE Stock Close Price data. 
