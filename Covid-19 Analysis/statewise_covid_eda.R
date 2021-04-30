@@ -1,11 +1,13 @@
+rm(list = ls())
 state_wise=read.csv(file="https://api.covid19india.org/csv/latest/state_wise_daily.csv",header=TRUE,stringsAsFactors = F)
 
 test_data = read.csv(file = 'https://api.covid19india.org/csv/latest/statewise_tested_numbers_data.csv')
 
 
 start_date = as.Date("01/05/2020", format = "%d/%m/%Y")
-end_date = as.Date("24/04/2021", format = "%d/%m/%Y")
-
+today_date = Sys.Date()
+end_date = as.Date(format(today_date, "%d/%m/%Y"), format = "%d/%m/%Y")
+end_date = end_date - 2
 tm = seq.Date(from = start_date, to = end_date, by = "day")
 n = length(tm)
 
@@ -61,10 +63,12 @@ confirmed_per_tested<- function(confirmed, tested)
 
 
 ## West bengal
-daily_tested_wb = get_daily_tested(test_data, "West Bengal")
+daily_tested_wb = get_daily_tested(test_data, "West Bengal", start_date = start_date, 
+                                   end_date = end_date)
 plot(tm, daily_tested_wb, type = 'l')
 
-daily_confirmed_wb = get_daily_confirmed(state_wise, state = "WB")
+daily_confirmed_wb = get_daily_confirmed(state_wise, state = "WB", start_date = start_date,
+                                         end_date = end_date)
 plot(tm, daily_confirmed_wb, type = 'l')
 
 
@@ -73,10 +77,11 @@ tpr_wb = confirmed_per_tested(daily_confirmed_wb, daily_tested_wb) * 100
 plot(tm, tpr_wb, type = 'l')
 
 ## Delhi
-daily_tested_dl = get_daily_tested(test_data, "Delhi")
+daily_tested_dl = get_daily_tested(test_data, "Delhi", start_date = start_date, end_date = end_date)
 plot(tm, daily_tested_dl, type = 'l')
 
-daily_confirmed_dl = get_daily_confirmed(state_wise, state = "DL")
+daily_confirmed_dl = get_daily_confirmed(state_wise, state = "DL", start_date = start_date,
+                                         end_date = end_date)
 plot(tm, daily_confirmed_dl, type = 'l')
 
 
@@ -84,10 +89,12 @@ tpr_dl = confirmed_per_tested(daily_confirmed_dl, daily_tested_dl) * 100
 plot(tm, tpr_dl, type = 'l')
 
 ## Maharashtra
-daily_tested_mh = get_daily_tested(test_data, "Maharashtra")
+daily_tested_mh = get_daily_tested(test_data, "Maharashtra", start_date = start_date,
+                                   end_date = end_date)
 plot(tm, daily_tested_mh, type = 'l')
 
-daily_confirmed_mh = get_daily_confirmed(state_wise, state = "MH")
+daily_confirmed_mh = get_daily_confirmed(state_wise, state = "MH", start_date = start_date,
+                                         end_date = end_date)
 plot(tm, daily_confirmed_mh, type = 'l')
 
 
@@ -96,10 +103,11 @@ plot(tm, tpr_mh, type = 'l')
 
 
 ## Tamil Nadu
-daily_tested_tn = get_daily_tested(test_data, "Tamil Nadu")
+daily_tested_tn = get_daily_tested(test_data, "Tamil Nadu", start_date = start_date, end_date = end_date)
 plot(tm, daily_tested_tn, type = 'l')
 
-daily_confirmed_tn = get_daily_confirmed(state_wise, state = "TN")
+daily_confirmed_tn = get_daily_confirmed(state_wise, state = "TN", start_date = start_date,
+                                         end_date = end_date)
 plot(tm, daily_confirmed_tn, type = 'l')
 
 
@@ -108,7 +116,7 @@ plot(tm, tpr_tn, type = 'l')
 
 
 plot(x = tm, y = tpr_wb, type = 'l', col = 'red',   ylim = c(0,50),
-     xlab = "Time", ylab = "True Positive Rate", main = "Tpr for various states")
+     xlab = "Time", ylab = "Test Positive Rate", main = "Daily Tpr for various states")
 lines(x = tm, y = tpr_mh, type = 'l', col = "green")
 lines(x = tm, y = tpr_dl, type = 'l', col = "blue")     
 lines(x = tm, y = tpr_tn, type = 'l', col = "brown")
@@ -137,14 +145,14 @@ kpss.test(diff(train_tpr_wb))
 d = ndiffs(train_tpr_wb)
 d
 
-arima_model = auto.arima(train_tpr_wb,start.p =0, start.q = 0,seasonal = F,
-                         max.p = 10, max.q = 10, ic = "aicc")
+arima_model = auto.arima(train_tpr_wb,start.p =0, start.q = 0,seasonal = F, d= d,
+                         max.p = 5, max.q = 5, ic = "aicc")
 arima_model
 
 forecasted_values = forecast(arima_model, h= period)
 forecasted_values = as.numeric(forecasted_values$mean)
 
-mse = sum((test_tpr_wb - forecasted_values)^2)
+mse = (sum((test_tpr_wb - forecasted_values)^2))/ length(test_tpr_wb)
 mse
 
 prediction = data.frame("Actual" = test_tpr_wb, "Predicted" = forecasted_values)
@@ -163,12 +171,12 @@ col = c("blue", "red" ),
 lty = 1,
 cex = 0.6)
 
-# Arima captures the trend but cannot capture the huge spike
+# Arima captures the trend but cannot capture the magnitude of the huge spike
 
 # Model diagnostics
 acf(arima_model$residuals)
+#looking at residuals the lag at 1 is significant. Hence model is not capturing perfectly
 
-#looking at residuals the lag at 3 is significant. Hence model is not capturing perfectly
 Box.test(arima_model$residuals,lag = 10, type = "Box-Pierce")
 # null hypothesis of no autocorrelation of residuals is rejected. So, model has lack of fit
 
@@ -177,5 +185,3 @@ shapiro.test(arima_model$residuals)
 
 # all model diagnostics of ARIMA model fails. So it is not the correct model in capturing this pattern
 
-
-######## GARCH model
