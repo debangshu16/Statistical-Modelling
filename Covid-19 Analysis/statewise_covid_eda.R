@@ -7,7 +7,7 @@ test_data = read.csv(file = 'https://api.covid19india.org/csv/latest/statewise_t
 start_date = as.Date("01/05/2020", format = "%d/%m/%Y")
 today_date = Sys.Date()
 end_date = as.Date(format(today_date, "%d/%m/%Y"), format = "%d/%m/%Y")
-end_date = end_date - 2
+end_date = end_date - 1
 tm = seq.Date(from = start_date, to = end_date, by = "day")
 n = length(tm)
 
@@ -39,7 +39,8 @@ get_daily_tested<-function(test_data, state = "West Bengal", start_date = as.Dat
 get_daily_confirmed<- function(state_wise, state = "WB", start_date = as.Date("01/05/2020", format = "%d/%m/%Y"),
                                end_date = as.Date("24/04/2021", format = "%d/%m/%Y"))
 {
-  state_data = state_wise[(state_wise$Date_YMD>=start_date),c("Date_YMD","Status",state)]
+  filter = (state_wise$Date_YMD >= start_date) & (state_wise$Date_YMD<=end_date)
+  state_data = state_wise[filter,c("Date_YMD","Status",state)]
   state_data_confirmed = state_data[(state_data$Status=="Confirmed"),state]
   return (state_data_confirmed)
 }
@@ -114,7 +115,8 @@ plot(tm, daily_confirmed_tn, type = 'l')
 tpr_tn = confirmed_per_tested(daily_confirmed_tn, daily_tested_tn) * 100
 plot(tm, tpr_tn, type = 'l')
 
-
+plot_tpr<- function()
+{
 plot(x = tm, y = tpr_wb, type = 'l', col = 'red',   ylim = c(0,50),
      xlab = "Time", ylab = "Test Positive Rate", main = "Daily Tpr for various states")
 lines(x = tm, y = tpr_mh, type = 'l', col = "green")
@@ -125,6 +127,25 @@ legend('topleft',
        col = c("red", "green" , "blue", "brown"),
        lty = 1,
        cex = 0.6)
+}
+plot_tpr()
+
+plot_daily_tested<-function()
+{
+  plot(x = tm, y = daily_tested_wb, type = 'l', col = 'red', ylim = c(0, 300000), 
+       xlab = "Time", ylab = "Daily tested", main = "Number of daily tests for various states")
+  lines(x = tm, y = daily_tested_mh, type = 'l', col = "green")
+  lines(x = tm, y = daily_tested_dl, type = 'l', col = "blue")     
+  lines(x = tm, y = daily_tested_tn, type = 'l', col = "brown")
+  legend('topleft',
+         legend =  c("West Bengal", "Maharashtra", "Delhi", "Tamil Nadu"),
+         col = c("red", "green" , "blue", "brown"),
+         lty = 1,
+         cex = 0.6)
+}
+
+
+plot_daily_tested()
 
 
 ### Fit ARIMA model on true positive rate data for West Bengal
@@ -140,13 +161,13 @@ kpss.test(train_tpr_wb)
 # Data is not stationary
 
 kpss.test(diff(train_tpr_wb))
-# 1st difference Data stationary
+# 1st difference Data still not stationary
 
 d = ndiffs(train_tpr_wb)
 d
 
-arima_model = auto.arima(train_tpr_wb,start.p =0, start.q = 0,seasonal = F, d= d,
-                         max.p = 5, max.q = 5, ic = "aicc")
+arima_model = auto.arima(train_tpr_wb,start.p =2, start.q = 2,seasonal = F, d= d,
+                         max.p = 10, max.q = 10, ic = "aicc")
 arima_model
 
 forecasted_values = forecast(arima_model, h= period)
